@@ -1,13 +1,50 @@
-import pygame, sys, random, time, asyncio, shelve
+import pygame, sys, random, time, asyncio
 from pygame.locals import *
 
+# --- Platform detection ---
+import platform as _platform
+IS_WEB = _platform.system() == "Emscripten"
+
+# Browser local storage helper (only works when running via Pygbag in browser)
+def load_best_score():
+    if IS_WEB:
+        try:
+            import js  # js is available in Pygbag/Emscripten environments
+            val = js.localStorage.getItem("kky_best_score")
+            if val is not None:
+                return int(val)
+        except Exception:
+            pass
+    else:
+        # Fall back to file on desktop
+        try:
+            with open('best_game.txt', 'r') as f:
+                return int(f.readline().strip())
+        except Exception:
+            pass
+    return 0
+
+def save_best_score(score):
+    if IS_WEB:
+        try:
+            import js
+            js.localStorage.setItem("kky_best_score", str(score))
+        except Exception:
+            pass
+    else:
+        try:
+            with open('best_game.txt', 'w') as f:
+                f.write(str(score))
+        except Exception:
+            pass
 
 pygame.init()
 vec = pygame.math.Vector2
 
-pygame.mixer.music.load("KKY-Game-Music-New.ogg")
+pygame.mixer.music.load("KKY Game Music Revamp.wav")
 pygame.mixer.music.play(-1)
 
+game_score = 0
 HEIGHT = 450
 WIDTH = 800
 ACC = 0.5
@@ -16,11 +53,11 @@ FPS = 60
 
 FramePerSec = pygame.time.Clock()
 displaysurface = pygame.display.set_mode((WIDTH, HEIGHT))
-
 pygame.display.set_caption("KKY Platform Game")
+
 pillar_image = pygame.image.load("Pillar Picture.png")
 start_button_image = pygame.image.load("Start Button.png")
-sb_image_scaled = pygame.transform
+sb_image_scaled = pygame.transform.scale(start_button_image, (400, 135))
 bo_image = pygame.image.load("BoKKY.jpeg")
 bo_scaled = pygame.transform.scale(bo_image, (800, 450))
 yoda_sound = pygame.mixer.Sound("Lego-Yoda-death.ogg")
@@ -33,15 +70,7 @@ topleft_rect = pillar.get_rect(topleft=(0, 0))
 topright_rect = pillar.get_rect(topright=(800, 0))
 bleft_rect = pillar.get_rect(bottomleft=(0, 450))
 bright_rect = pillar.get_rect(bottomright=(800, 450))
-'''
-def start_screen():
-    while True:
-        pass
 
-class Button():
-    def __init__(self):
-        self.image =
-'''
 
 class Player(pygame.sprite.Sprite):
     def __init__(self):
@@ -132,23 +161,23 @@ def check(platform, groupies):
 
 def plat_gen():
     platform_y_spacing = 70
-    if 500 < (game_score/10) <= 1000:
-        platform_y_spacing = 90
-    if 1000 < (game_score/10) <= 1500:
-        platform_y_spacing = 110
-    if 1500 < (game_score/10) <= 2000:
+    shown_score = int(game_score / 10)
+    if shown_score > 200:
+        platform_y_spacing = 85
+    if shown_score > 400:
+        platform_y_spacing = 100
+    if shown_score > 600:
         platform_y_spacing = 115
-    if 2000 < (game_score/10) <= 2500:
+    if shown_score > 800:
+        platform_y_spacing = 120
+    if shown_score > 1000:
         platform_y_spacing = 125
-    if 2500 < (game_score/10) <= 3000:
-        platform_y_spacing = 135
-    if 3000 < (game_score/10) <= 3500:
+    if shown_score > 1100:
+        platform_y_spacing = 130
+    if shown_score > 1200:
+        platform_y_spacing = 140
+    if shown_score > 1500:
         platform_y_spacing = 150
-    if 3500 < (game_score/10) <= 4000:
-        platform_y_spacing = 165
-    if 4000 < (game_score/10):
-        platform_y_spacing = 180
-
     last_y = 0
     if platforms:
         last_y = min([plat.rect.y for plat in platforms])
@@ -166,100 +195,177 @@ def plat_gen():
         attempts += 1
 
 
-PT1 = Platform(WIDTH // 2, HEIGHT - 10)
-PT1.image = pygame.Surface((WIDTH, 20))
-PT1.image.fill((0, 255, 0))
-PT1.rect = PT1.image.get_rect(center=(WIDTH / 2, HEIGHT - 10))
-PT1.point = False
-P1 = Player()
+def reset_game():
+    """Reset all game state for a new game."""
+    global game_score, PT1, P1
 
+    all_sprites.empty()
+    platforms.empty()
+
+    game_score = 0
+
+    PT1 = Platform(WIDTH // 2, HEIGHT - 10)
+    PT1.image = pygame.Surface((WIDTH, 20))
+    PT1.image.fill((0, 255, 0))
+    PT1.rect = PT1.image.get_rect(center=(WIDTH / 2, HEIGHT - 10))
+    PT1.point = False
+    all_sprites.add(PT1)
+    platforms.add(PT1)
+
+    P1 = Player()
+    all_sprites.add(P1)
+
+    initial_y = HEIGHT - 80
+    for i in range(6):
+        x = random.randint(200, 600)
+        y = initial_y - i * 70
+        pl = Platform(x, y)
+        platforms.add(pl)
+        all_sprites.add(pl)
+
+
+# --- Sprite groups (populated by reset_game) ---
 all_sprites = pygame.sprite.Group()
 platforms = pygame.sprite.Group()
-
-all_sprites.add(PT1)
-platforms.add(PT1)
-
-all_sprites.add(P1)
-
-# Create initial platforms spaced vertically
-initial_y = HEIGHT - 80
-for i in range(6):
-    x = random.randint(200, 600)
-    y = initial_y - i * 70
-    pl = Platform(x, y)
-    platforms.add(pl)
-    all_sprites.add(pl)
-
-with open('best_game.txt', 'r') as best_game:
-    best_score = int(best_game.readline().strip())
+PT1 = None
+P1 = None
 
 
-async def main():
-    global best_score
-    global game_score
-    # Main loop
+async def start_screen():
+    """
+    Show the start screen and wait for the player to press SPACE or click.
+    Fully async-friendly: yields every frame so the browser doesn't freeze.
+    """
+    f = pygame.font.SysFont("Verdana", 22)
+    prompt = f.render("Press SPACE or click to play!", True, (255, 255, 0))
+    prompt_rect = prompt.get_rect(center=(WIDTH // 2, HEIGHT // 2 + 100))
+    spaceprompt = f.render("SPACE to Jump; Arrow Keys to Move", True, (255, 0, 255))
+    space_rect = spaceprompt.get_rect(center=(WIDTH // 2, HEIGHT // 2 + 180))
+
     while True:
         for event in pygame.event.get():
             if event.type == QUIT:
                 pygame.quit()
                 sys.exit()
-            if event.type == pygame.KEYDOWN:
-                if event.key == pygame.K_SPACE:
-                    P1.jump()
-            if event.type == pygame.KEYUP:
-                if event.key == pygame.K_SPACE:
-                    P1.cancel_jump()
+            if event.type == pygame.KEYDOWN and event.key == pygame.K_SPACE:
+                return  # Player is ready — exit the start screen
+            if event.type == pygame.MOUSEBUTTONDOWN:
+                return  # Also start on click
 
-        P1.move()
-        P1.update()
-
-        if P1.rect.top <= HEIGHT / 3:
-            P1.pos.y += abs(P1.vel.y)
-            game_score += abs(P1.vel.y)
-            for plat in platforms:
-                plat.rect.y += abs(P1.vel.y)
-                if plat.rect.top >= HEIGHT:
-                    plat.kill()
-
-        if P1.rect.top > HEIGHT:
-            with open('best_game.txt', 'w') as best_game:
-                best_game.write(str(best_score))
-            pygame.mixer.music.stop()
-            pygame.mixer.Sound.play(yoda_sound)
-            for entity in all_sprites:
-                entity.kill()
-            displaysurface.blit(you_died_scaled, (0, 0))
-            pygame.display.update()
-            time.sleep(2)
-            pygame.mixer.Sound.play(cat_laughing)
-            displaysurface.blit(bo_scaled, (0, 0))
-            pygame.display.update()
-            time.sleep(3.7)
-            pygame.quit()
-            sys.exit()
-
-        plat_gen()
         displaysurface.fill((0, 0, 0))
+        # Draw pillars
+        displaysurface.blit(pillar, topleft_rect)
+        displaysurface.blit(pillar, topright_rect)
+        displaysurface.blit(pillar, bright_rect)
+        displaysurface.blit(pillar, bleft_rect)
+        # Draw the start button image centred on screen
+        sb_rect = sb_image_scaled.get_rect(center=(WIDTH // 2, HEIGHT // 2 - 20))
+        displaysurface.blit(sb_image_scaled, sb_rect)
+        displaysurface.blit(prompt, prompt_rect)
+        displaysurface.blit(spaceprompt, space_rect)
 
-        for entity in all_sprites:
-            displaysurface.blit(entity.image, entity.rect)
-            displaysurface.blit(pillar, topleft_rect)
-            displaysurface.blit(pillar, topright_rect)
-            displaysurface.blit(pillar, bright_rect)
-            displaysurface.blit(pillar, bleft_rect)
-            if isinstance(entity, Platform):
-                entity.move()
-
-        f = pygame.font.SysFont("Verdana", 20)
-        actual_score = int(game_score / 10)
-        if best_score <= actual_score:
-            best_score = actual_score
-        headline = f'Best: {best_score} | Current: {actual_score}'
-        g = f.render((str(headline)), True, (123, 255, 0))
-        displaysurface.blit(g, (280, 10))
         pygame.display.update()
         FramePerSec.tick(FPS)
+        await asyncio.sleep(0)  # Yield control every frame — required for Pygbag
+
+
+async def death_screen():
+    """Play death sounds/images, then return so the loop can restart."""
+    pygame.mixer.music.stop()
+    pygame.mixer.Sound.play(yoda_sound)
+    displaysurface.blit(you_died_scaled, (0, 0))
+    pygame.display.update()
+    time.sleep(2)
+
+    # Wait ~2 seconds while still yielding to the browser
+    for _ in range(FPS * 2):
+        for event in pygame.event.get():
+            if event.type == QUIT:
+                pygame.quit()
+                sys.exit()
         await asyncio.sleep(0)
+    pygame.mixer.music.play(-1)
+
+    displaysurface.blit(bo_scaled, (0, 0))
+    pygame.display.update()
+
+    for _ in range(int(FPS * 3.7)):
+        for event in pygame.event.get():
+            if event.type == QUIT:
+                pygame.quit()
+                sys.exit()
+        await asyncio.sleep(0)
+
+
+async def main():
+    global game_score, best_score, P1
+
+    best_score = load_best_score()
+
+    # Outer loop: start screen → game → death → repeat
+    while True:
+        await start_screen()          # Wait here until player starts
+
+        reset_game()                  # Fresh game state
+           # Restart music
+
+        # --- Inner game loop ---
+        while True:
+            for event in pygame.event.get():
+                if event.type == QUIT:
+                    save_best_score(best_score)
+                    pygame.quit()
+                    sys.exit()
+                if event.type == pygame.KEYDOWN:
+                    if event.key == pygame.K_SPACE:
+                        P1.jump()
+                if event.type == pygame.KEYUP:
+                    if event.key == pygame.K_SPACE:
+                        P1.cancel_jump()
+
+            P1.move()
+            P1.update()
+
+            if P1.rect.top <= HEIGHT / 3:
+                P1.pos.y += abs(P1.vel.y)
+                game_score += abs(P1.vel.y)
+                for plat in platforms:
+                    plat.rect.y += abs(P1.vel.y)
+                    if plat.rect.top >= HEIGHT:
+                        plat.kill()
+
+            # Player fell off screen → death
+            if P1.rect.top > HEIGHT:
+                actual_score = int(game_score / 10)
+                if actual_score > best_score:
+                    best_score = actual_score
+                save_best_score(best_score)
+                await death_screen()
+                break  # Break inner loop → back to start screen
+
+            plat_gen()
+            displaysurface.fill((0, 0, 0))
+
+            for entity in all_sprites:
+                displaysurface.blit(entity.image, entity.rect)
+                displaysurface.blit(pillar, topleft_rect)
+                displaysurface.blit(pillar, topright_rect)
+                displaysurface.blit(pillar, bright_rect)
+                displaysurface.blit(pillar, bleft_rect)
+                if isinstance(entity, Platform):
+                    entity.move()
+
+            f = pygame.font.SysFont("Verdana", 20)
+            actual_score = int(game_score / 10)
+            if best_score <= actual_score:
+                best_score = actual_score
+            headline = f'Best: {best_score} | Current: {actual_score}'
+            g = f.render(headline, True, (123, 255, 0))
+            displaysurface.blit(g, (280, 10))
+
+            pygame.display.update()
+            FramePerSec.tick(FPS)
+            await asyncio.sleep(0)  # Yield every frame — required for Pygbag
 
 
 asyncio.run(main())
